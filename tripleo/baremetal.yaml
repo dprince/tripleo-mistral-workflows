@@ -1,0 +1,67 @@
+---
+version: '2.0'
+name: tripleo.baremetal
+description: TripleO Baremetal Workflows
+
+workflows:
+
+  set_node_state:
+    type: direct
+
+    input:
+      - node_uuid
+      - state
+      - target_state
+
+    tasks:
+
+      set_provision_state:
+        on-success: wait_for_provision_state
+        action: ironic.node_set_provision_state node_uuid=<% $.node_uuid %> state=<% $.state %>
+
+      wait_for_provision_state:
+        action: ironic.node_get node_id=<% $.node_uuid %>
+        timeout: 9
+        retry:
+          delay: 1
+          count: 10
+          continue-on: <% $.wait_for_provision_state.provision_state != $.target_state %>
+
+  bulk_introspect:
+    type: direct
+
+    tasks:
+
+      get_available_nodes:
+        on-success: set_nodes_managed
+        action: ironic.node_list maintenance=False associated=False
+        publish:
+          available_nodes: <% $.get_available_nodes %>
+
+      set_nodes_managed:
+        on-success: start_introspection
+        with-items: node in <% $.available_nodes %>
+        workflow: tripleo.baremetal.set_node_state node_uuid=<% $.node.uuid %> state='manage' target_state='manageable'
+
+      start_introspection:
+        on-success: wait_for_introspection_to_finish
+        with-items: node in <% $.available_nodes %>
+        action: inspector.instrospect uuid=<% $.node.uuid %>
+        concurrency: 1
+        wait-after: 5
+
+      # NOTE(dprince): since we use with-items here the result is a collection
+      # in the format of:
+      # [{"finished": true, "error": null }, {"finished": true, "error": null }]
+      wait_for_introspection_to_finish:
+        on-success: set_nodes_active
+        with-items: node in <% $.available_nodes %>
+        action: inspector.get_status uuid=<% $.node.uuid %>
+        retry:
+          delay: 5
+          count: 400
+          continue-on: <% len($.wait_for_introspection_to_finish) != len($.wait_for_introspection_to_finish.where($.finished = true)) %>
+
+      set_nodes_active:
+        with-items: node in <% $.available_nodes %>
+        workflow: tripleo.baremetal.set_node_state node_uuid=<% $.node.uuid %> state='provide' target_state='available'
