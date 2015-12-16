@@ -46,7 +46,7 @@ workflows:
       start_introspection:
         on-success: wait_for_introspection_to_finish
         with-items: node in <% $.available_nodes %>
-        action: inspector.instrospect uuid=<% $.node.uuid %>
+        action: baremetal_introspection.introspect uuid=<% $.node.uuid %>
         concurrency: 1
         wait-after: 5
 
@@ -56,7 +56,7 @@ workflows:
       wait_for_introspection_to_finish:
         on-success: set_nodes_active
         with-items: node in <% $.available_nodes %>
-        action: inspector.get_status uuid=<% $.node.uuid %>
+        action: baremetal_introspection.get_status uuid=<% $.node.uuid %>
         retry:
           delay: 5
           count: 400
